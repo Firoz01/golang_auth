@@ -20,43 +20,107 @@ import (
 )
 
 type Service struct {
-	repo               Repository
-	logger             logger.Logger
-	config             *config.Config
-	usersServiceRepo   UsersServiceRepo
-	redisClient        *redis.Client
-	loginAttemptWorker *async_worker.LoginAttemptWorker
+	repo             Repository
+	logger           logger.Logger
+	config           *config.Config
+	usersServiceRepo UsersServiceRepo
+	redisClient      *redis.Client
+	workerPool       *async_worker.WorkerPool
+	workerService    WorkerService
 }
 
 func NewService(repository Repository, logger logger.Logger, config *config.Config, usersServiceRepo UsersServiceRepo, redisClient *redis.Client) *Service {
+	workerPool := async_worker.NewWorkerPool(100)
+	if workerPool == nil {
+		logger.Error("Failed to initialize loginAttemptWorker")
+		return nil
+	}
+
 	service := &Service{
-		repo:               repository,
-		logger:             logger,
-		config:             config,
-		usersServiceRepo:   usersServiceRepo,
-		redisClient:        redisClient,
-		loginAttemptWorker: async_worker.NewLoginAttemptWorker(repository, 100), // Initialize with repository as AsyncLogger
+		repo:             repository,
+		logger:           logger,
+		config:           config,
+		usersServiceRepo: usersServiceRepo,
+		redisClient:      redisClient,
+		workerPool:       workerPool,
+		workerService: WorkerService{
+			loginAttemptWorker: workerPool,
+			logger:             repository,
+		},
 	}
 
 	// Start the login attempt worker
-	service.loginAttemptWorker.Start(context.Background())
+	ctx := context.Background()
+	service.workerPool.Start(ctx, 10)
 
 	return service
 }
 
-type Repository interface {
-	LogLoginAttempt(ctx context.Context, attempt *entity.LoginAttempt) error
-	CountFailedAttempts(ctx context.Context, email string, since time.Time) (int, error)
-	GetFirstFailedAttemptTime(ctx context.Context, email string, since time.Time) (time.Time, error)
+// LoginAttemptTask is a task for logging login attempts.
+type LoginAttemptTask struct {
+	async_worker.TaskStatus
+	Attempt entity.LoginAttempt
+	Logger  LoginAttemptLogger
 }
 
-type UsersServiceRepo interface {
-	VerifyPasswordAndGetClaimData(ctx context.Context, in *proto.VerifyPasswordRequest) (*proto.VerifyPasswordResponse, error)
-	GetClaimDataByUserID(ctx context.Context, in *proto.ClaimDataByUserIDRequest) (*proto.UserClaimData, error)
+// UpdateLoginAttemptTask is another example task that implements the Task interface.
+type UpdateLoginAttemptTask struct {
+	async_worker.TaskStatus
+	AttemptID  int
+	UpdateFunc func(ctx context.Context, attemptID int) error
 }
 
-const maxAttempts = 5
-const lockoutDuration = 15 * time.Minute
+// Process processes the login attempt task.
+func (t *LoginAttemptTask) Process(ctx context.Context) error {
+	// Execute common pre-processing steps
+	if err := t.PreProcess(ctx); err != nil {
+		return fmt.Errorf("pre-processing failed: %v", err)
+	}
+	defer func() {
+		// Execute common post-processing steps (deferred to ensure it runs even on error)
+		if err := t.PostProcess(ctx); err != nil {
+			fmt.Printf("[%s] post-processing failed: ", err)
+		}
+	}()
+
+	// Perform the specific task logic
+	if err := t.Logger.LogLoginAttempt(ctx, &t.Attempt); err != nil {
+		t.SetErrorStatus(err)
+		return err
+	}
+	return nil
+}
+
+func (t *UpdateLoginAttemptTask) Process(ctx context.Context) error {
+	// Execute common pre-processing steps
+	if err := t.PreProcess(ctx); err != nil {
+		return fmt.Errorf("pre-processing failed: %v", err)
+	}
+	defer func() {
+		// Execute common post-processing steps (deferred to ensure it runs even on error)
+		if err := t.PostProcess(ctx); err != nil {
+			fmt.Printf("[%s] post-processing failed: %v\n", err)
+		}
+	}()
+
+	// Perform the specific task logic
+	if err := t.UpdateFunc(ctx, t.AttemptID); err != nil {
+		t.SetErrorStatus(err)
+		return err
+	}
+	return nil
+}
+
+// Service represents the main service.
+type WorkerService struct {
+	loginAttemptWorker *async_worker.WorkerPool
+	logger             LoginAttemptLogger
+}
+
+const (
+	maxAttempts     = 5
+	lockoutDuration = 15 * time.Minute
+)
 
 func (s *Service) trackLoginAttempts(ctx context.Context, email string) (bool, time.Duration, error) {
 	redisKey := fmt.Sprintf("login_attempts:%s", email)
@@ -109,11 +173,11 @@ func (s *Service) extractDeviceInfo(userAgent string) (device, os, osVersion str
 }
 
 func (s *Service) insertLoginAttempt(email, ip, userAgent string, status bool, message string) {
-
 	device, os, osVersion := s.extractDeviceInfo(userAgent)
-
-	go func() {
-		err := s.loginAttemptWorker.Enqueue(entity.LoginAttempt{
+	taskStatus := async_worker.NewTaskStatus()
+	task := &LoginAttemptTask{
+		TaskStatus: *taskStatus,
+		Attempt: entity.LoginAttempt{
 			Email:       email,
 			IPAddress:   ip,
 			AttemptTime: time.Now(),
@@ -123,9 +187,29 @@ func (s *Service) insertLoginAttempt(email, ip, userAgent string, status bool, m
 			OsVersion:   osVersion,
 			Successful:  status,
 			Reason:      message,
-		})
-		if err != nil {
+		},
+		Logger: s.workerService.logger,
+	}
+
+	go func() {
+		if err := s.workerPool.Enqueue(task); err != nil {
 			s.logger.Error("Failed to enqueue login attempt for logging:", err)
+		}
+	}()
+}
+
+func (s *Service) updateLoginAttempt(attemptID int) {
+	taskStatus := async_worker.NewTaskStatus()
+	// Update login attempt
+	updateTask := &UpdateLoginAttemptTask{
+		TaskStatus: *taskStatus,
+		AttemptID:  attemptID,
+		UpdateFunc: s.repo.UpdateLoginAttempt,
+	}
+
+	go func() {
+		if err := s.workerPool.Enqueue(updateTask); err != nil {
+			s.logger.Error("Failed to enqueue login attempt update:", err)
 		}
 	}()
 }
@@ -237,6 +321,7 @@ func (s *Service) EmailLogin(ctx context.Context, payloads *httpentity.EmailLogi
 
 	if !res.Match {
 		s.insertLoginAttempt(payloads.Email, ip, userAgent, false, "PASS_OR_EMAIL_DIDNT_MATCH")
+		s.updateLoginAttempt(31)
 		return apperror.New(http.StatusUnauthorized, "pass_or_email_didnt_match", "Your Password or email did not match")
 	}
 
@@ -272,5 +357,5 @@ func (s *Service) RefreshToken(ctx context.Context, payloads *httpentity.UserRef
 }
 
 func (s *Service) Close() {
-	s.loginAttemptWorker.Stop()
+	s.workerPool.Stop()
 }

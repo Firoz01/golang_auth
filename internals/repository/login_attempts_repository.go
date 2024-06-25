@@ -25,6 +25,15 @@ func (repo *LoginAttemptRepo) LogLoginAttempt(ctx context.Context, attempt *enti
 	return nil
 }
 
+func (repo *LoginAttemptRepo) UpdateLoginAttempt(ctx context.Context, attemptID int) error {
+	var model entity.LoginAttempt
+	_, err := repo.db.NewUpdate().Model(&model).Set("reason = ?", "UPDATED").Where("id=?", attemptID).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (repo *LoginAttemptRepo) CountFailedAttempts(ctx context.Context, email string, since time.Time) (int, error) {
 
 	count, err := repo.db.NewSelect().
