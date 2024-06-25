@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+option go_package = "github.com/Gononetllc/user_service/entity/proto";
+
+package proto;
+
+service UserService{
+  rpc VerifyPasswordAndGetClaimData(VerifyPasswordRequest) returns (VerifyPasswordResponse);
+  rpc GetClaimDataByUserID(ClaimDataByUserIDRequest)returns(userClaimData);
+}
+
+message VerifyPasswordRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message VerifyPasswordResponse {
+  bool match = 1;
+  userClaimData claim_data =2;
+}
+
+message  userGroupData {
+  string user_group_id=1;
+}
+
+message userClaimData {
+  string user_id = 1;
+  string first_name = 2;
+  string last_name = 3;
+  int32 location_type_id = 4;
+  int32 location_id = 5;
+  string email = 6;
+  repeated userGroupData user_groups=7;
+}
+
+message ClaimDataByUserIDRequest{
+  string user_id =1;
+}

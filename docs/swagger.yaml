@@ -1,0 +1,147 @@
+basePath: /api/v1
+definitions:
+  httpentity.UpdateCompanyRequest:
+    properties:
+      address:
+        type: string
+      autocurrency_interval:
+        type: string
+      business_legal_name:
+        type: string
+      business_name:
+        type: string
+      business_type_for_tax_id:
+        type: string
+      city:
+        type: string
+      company_id:
+        type: string
+      company_logo:
+        type: string
+      country:
+        type: string
+      currency_api_id:
+        type: integer
+      date_of_establishment:
+        type: string
+      default_currency:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      industry_id:
+        type: string
+      is_active:
+        type: boolean
+      last_name:
+        type: string
+      mobile:
+        type: string
+      purchase_autocurrency:
+        type: boolean
+      sales_autocurrency:
+        type: boolean
+      ssn:
+        type: string
+      tax_id:
+        type: string
+      telephone:
+        type: string
+      updated_by:
+        type: string
+      website:
+        type: string
+      zip:
+        type: string
+    required:
+    - address
+    - autocurrency_interval
+    - business_legal_name
+    - business_name
+    - business_type_for_tax_id
+    - city
+    - company_id
+    - company_logo
+    - country
+    - currency_api_id
+    - date_of_establishment
+    - default_currency
+    - email
+    - first_name
+    - industry_id
+    - last_name
+    - mobile
+    - ssn
+    - tax_id
+    - telephone
+    - updated_by
+    - website
+    - zip
+    type: object
+host: localhost:1327
+info:
+  contact: {}
+  description: This is a sample api documentation.
+  title: ERP core Service API Documentation.
+  version: "1.0"
+paths:
+  /company:
+    get:
+      consumes:
+      - application/json
+      description: get company
+      responses:
+        "200":
+          description: success
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Get Company
+      tags:
+      - Company
+    put:
+      consumes:
+      - application/json
+      description: update company
+      parameters:
+      - description: Company data
+        in: body
+        name: Company
+        required: true
+        schema:
+          $ref: '#/definitions/httpentity.UpdateCompanyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: success
+          schema:
+            type: string
+        "400":
+          description: error
+          schema:
+            type: string
+        "404":
+          description: error
+          schema:
+            type: string
+        "500":
+          description: error
+          schema:
+            type: string
+      summary: Update company
+      tags:
+      - Company
+swagger: "2.0"
